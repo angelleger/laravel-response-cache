@@ -1,0 +1,1 @@
+<?php // full code from doc ... ?>

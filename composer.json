@@ -1,0 +1,50 @@
+{
+  "name": "angelleger/laravel-response-cache",
+  "description": "Fast response caching for Laravel APIs with ETag, Redis tags, per-route TTLs, and safe auth-variation.",
+  "type": "library",
+  "license": "MIT",
+  "keywords": ["laravel", "cache", "response", "etag", "redis", "middleware"],
+  "authors": [
+    { "name": "Angel Leger", "email": "you@example.com" }
+  ],
+  "require": {
+    "php": "^8.1",
+    "illuminate/support": "^10.0|^11.0",
+    "illuminate/cache": "^10.0|^11.0",
+    "illuminate/http": "^10.0|^11.0",
+    "illuminate/routing": "^10.0|^11.0"
+  },
+  "require-dev": {
+    "orchestra/testbench": "^8.0|^9.0",
+    "pestphp/pest": "^2.31",
+    "pestphp/pest-plugin-laravel": "^2.3",
+    "phpstan/phpstan": "^1.11",
+    "nunomaduro/larastan": "^2.9"
+  },
+  "autoload": {
+    "psr-4": {
+      "AngelLeger\\ResponseCache\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "AngelLeger\\ResponseCache\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "vendor/bin/pest --colors=always",
+    "phpstan": "vendor/bin/phpstan analyse --memory-limit=1G"
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "AngelLeger\\ResponseCache\\ResponseCacheServiceProvider"
+      ],
+      "aliases": {
+        "ResponseCache": "AngelLeger\\ResponseCache\\Facades\\ResponseCache"
+      }
+    }
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
