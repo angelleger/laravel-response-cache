@@ -37,5 +37,7 @@ class ResponseCacheServiceProvider extends ServiceProvider
                 Console\FlushResponseCache::class,
             ]);
         }
+
+        $router->aliasMiddleware('resp.cache', Http\Middleware\ResponseCache::class);
     }
 }
