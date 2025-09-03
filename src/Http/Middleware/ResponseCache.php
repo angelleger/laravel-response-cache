@@ -21,7 +21,7 @@ class ResponseCache
      *  - tag:foo      (múltiples)
      *  - auth=true|false (permite cachear autenticados; por defecto false si guest_only=true)
      */
-    public function handle(Request $request, Closure $next, ...$params): Response
+    public function handle(Request $request, Closure $next, string ...$params): Response
     {
         if (!in_array($request->getMethod(), ['GET', 'HEAD'], true)) {
             return $next($request);
@@ -96,7 +96,11 @@ class ResponseCache
         return $response;
     }
 
-    /** @return array{0:int,1:array<int,string>,2:bool} */
+    /**
+     * @param array<int,string> $params
+     * @param array<string,mixed> $cfg
+     * @return array{0:int,1:array<int,string>,2:bool}
+     */
     private function parse(array $params, array $cfg): array
     {
         $ttl = (int) ($cfg['ttl'] ?? 300);
@@ -135,6 +139,10 @@ class ResponseCache
         return true;
     }
 
+    /**
+     * pack the response into a storable array
+     * @return array{status:int,headers:array<string,array<int,string>>,body:string}
+     */
     private function pack(Response $response): array
     {
         return [
@@ -144,6 +152,10 @@ class ResponseCache
         ];
     }
 
+    /**
+     * unpack the stored array into a Response
+     * @return Response
+     */
     private function unpack(array $payload): Response
     {
         $resp = new Response($payload['body'] ?? '', $payload['status'] ?? 200);
@@ -155,7 +167,11 @@ class ResponseCache
         return $resp;
     }
 
-    /** Filtra headers inseguros para reutilización */
+    /**
+     * Filters out headers that should not be cached
+     * @param Response $response
+     * @return array<string,array<int,string>>
+     */
     private function headers(Response $response): array
     {
         $exclude = ['Set-Cookie', 'Transfer-Encoding', 'Content-Length'];
@@ -164,7 +180,7 @@ class ResponseCache
             if (in_array($k, $exclude, true)) {
                 continue;
             }
-            $headers[$k] = is_array($vals) ? $vals : [$vals];
+            $headers[$k] = is_array($vals) ? array_values($vals) : [(string)$vals];
         }
         return $headers;
     }

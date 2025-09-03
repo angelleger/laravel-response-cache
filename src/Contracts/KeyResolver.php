@@ -9,7 +9,9 @@ use Illuminate\Http\Request;
 interface KeyResolver
 {
     /**
-     * Devuelve [cacheKey, contextArray] para diagnóstico/observabilidad.
+     * Return [cacheKey, contextArray] for the given request.
+     *
+     * @return array{0:string,1:array<string,string>}
      */
     public function make(Request $request): array;
 }
