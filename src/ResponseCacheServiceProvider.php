@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace AngelLeger\ResponseCache;
 
-use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 use AngelLeger\ResponseCache\Contracts\KeyResolver;
@@ -24,18 +23,19 @@ class ResponseCacheServiceProvider extends ServiceProvider
         });
     }
 
-    public function boot(Router $router, HttpKernel $kernel): void
+    public function boot(Router $router): void
     {
-        $this->publishes([
-            __DIR__ . '/../config/response_cache.php' => config_path('response_cache.php'),
-        ], 'response-cache-config');
-
-        $router->aliasMiddleware('resp.cache', Http\Middleware\ResponseCache::class);
-
         if ($this->app->runningInConsole()) {
+
+            $this->publishes([
+                __DIR__ . '/../config/response_cache.php' => config_path('response_cache.php'),
+            ], 'response-cache-config');
+
             $this->commands([
                 Console\FlushResponseCache::class,
             ]);
         }
+        
+        $router->aliasMiddleware('resp.cache', Http\Middleware\ResponseCache::class);
     }
 }
