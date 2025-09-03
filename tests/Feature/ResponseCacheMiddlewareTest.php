@@ -5,6 +5,8 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Route;
 use AngelLeger\ResponseCache\Support\ResponseCache as Resp;
+use function Pest\Laravel\get;
+use function Pest\Laravel\withHeaders;
 
 it('caches get responses', function () {
     $calls = 0;
@@ -14,11 +16,11 @@ it('caches get responses', function () {
         return response('bar')->header('Cache-Control', 'public');
     });
 
-    $first = $this->get('/foo');
+    $first = get('/foo');
     expect($first->getContent())->toBe('bar');
     expect($calls)->toBe(1);
 
-    $second = $this->get('/foo');
+    $second = get('/foo');
     expect($second->getContent())->toBe('bar');
     expect($calls)->toBe(1);
 });
@@ -28,10 +30,10 @@ it('returns 304 when etag matches', function () {
         return response('etagged')->header('Cache-Control', 'public');
     });
 
-    $first = $this->get('/etag');
+    $first = get('/etag');
     $etag = $first->headers->get('ETag');
 
-    $second = $this->withHeaders(['If-None-Match' => $etag])->get('/etag');
+    $second = withHeaders(['If-None-Match' => $etag])->get('/etag');
 
     expect($second->getStatusCode())->toBe(304);
     expect($second->getContent())->toBe('');

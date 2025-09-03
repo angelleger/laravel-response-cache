@@ -9,8 +9,10 @@ use Illuminate\Support\Facades\Cache;
 final class ResponseCache
 {
     /**
-     * Invalida todas las entradas cacheadas bajo los tags dados.
-     * Requiere Redis u otro store con soporte de tags.
+     * Invalidate cache entries by tags.
+     * If the cache store does not support tags, this is a no-op.
+     *
+     * @param string[] $tags
      */
     public static function invalidateByTags(array $tags): void
     {

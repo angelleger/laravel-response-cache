@@ -15,6 +15,10 @@ final class DefaultKeyResolver implements KeyResolver
         private readonly array $varyHeaders = [],
     ) {}
 
+    /**
+     * Returns [cacheKey, contextArray] for diagnostics/observability.
+     * @return array{0:string,1:array<string,string>}
+     */
     public function make(Request $request): array
     {
         $includeIp = (bool) config('response_cache.include_ip', false);

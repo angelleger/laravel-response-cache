@@ -21,7 +21,7 @@ class ResponseCache
      *  - tag:foo      (múltiples)
      *  - auth=true|false (permite cachear autenticados; por defecto false si guest_only=true)
      */
-    public function handle(Request $request, Closure $next, ...$params): Response
+    public function handle(Request $request, Closure $next, string ...$params): Response
     {
         if (!in_array($request->getMethod(), ['GET', 'HEAD'], true)) {
             return $next($request);
@@ -96,7 +96,12 @@ class ResponseCache
         return $response;
     }
 
-    /** @return array{0:int,1:array<int,string>,2:bool} */
+    /**
+     * Parses middleware parameters and merges with config defaults.
+     * @param string[] $params
+     * @param array<string,mixed> $cfg
+     * @return array{0:int,1:array<int,string>,2:bool}
+     */
     private function parse(array $params, array $cfg): array
     {
         $ttl = (int) ($cfg['ttl'] ?? 300);
@@ -135,6 +140,10 @@ class ResponseCache
         return true;
     }
 
+    /**
+     * pack a response into a storable array
+     * @return array{status:int,headers:array<string,list<string>>,body:string}
+     */
     private function pack(Response $response): array
     {
         return [
@@ -144,6 +153,10 @@ class ResponseCache
         ];
     }
 
+    /**
+     * unpack a stored array into a Response
+     * @param array{status?:int,headers?:array<string,list<string>>,body?:string} $payload
+     */
     private function unpack(array $payload): Response
     {
         $resp = new Response($payload['body'] ?? '', $payload['status'] ?? 200);
@@ -155,7 +168,11 @@ class ResponseCache
         return $resp;
     }
 
-    /** Filtra headers inseguros para reutilización */
+    /**
+     * Filter out headers that should not be cached
+     *
+     * @return array<string,list<string>>
+     */
     private function headers(Response $response): array
     {
         $exclude = ['Set-Cookie', 'Transfer-Encoding', 'Content-Length'];

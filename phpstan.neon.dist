@@ -6,6 +6,6 @@ parameters:
     - src
     - tests
   level: 6
-  checkGenericClassInNonGenericObjectType: false
+  reportUnmatchedIgnoredErrors: false
   ignoreErrors:
     - '#Call to an undefined method .*->getStore\(\)->tags#'
