@@ -77,8 +77,9 @@ class ResponseCache
             $response->headers->set('ETag', '"' . sha1($response->getContent()) . '"');
         }
 
-        // Cache-Control razonable si no viene
-        if (!$response->headers->has('Cache-Control')) {
+        // Cache-Control razonable si no viene o si el middleware reemplaza encabezados privados
+        if (! $response->headers->has('Cache-Control')
+            || str_contains(strtolower((string) $response->headers->get('Cache-Control')), 'private')) {
             $response->headers->set('Cache-Control', 'public, max-age=' . $ttl);
         }
 
@@ -133,7 +134,7 @@ class ResponseCache
         }
 
         $cc = strtolower((string) $response->headers->get('Cache-Control', ''));
-        if (str_contains($cc, 'no-store') || str_contains($cc, 'private')) {
+        if (str_contains($cc, 'no-store')) {
             return false;
         }
 

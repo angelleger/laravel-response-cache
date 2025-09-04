@@ -25,6 +25,24 @@ it('caches get responses', function () {
     expect($calls)->toBe(1);
 });
 
+it('caches responses without explicit cache-control header', function () {
+    $calls = 0;
+
+    Route::middleware('resp.cache:ttl=10')->get('/baz', function () use (&$calls) {
+        $calls++;
+        return response('baz');
+    });
+
+    $first = get('/baz');
+    expect($first->headers->get('Cache-Control'))->toBe('max-age=10, public');
+    expect($calls)->toBe(1);
+
+    $second = get('/baz');
+    expect($second->getContent())->toBe('baz');
+    expect($calls)->toBe(1);
+});
+
+
 it('returns 304 when etag matches', function () {
     Route::middleware('resp.cache:ttl=10')->get('/etag', function () {
         return response('etagged')->header('Cache-Control', 'public');
