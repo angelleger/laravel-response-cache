@@ -136,10 +136,8 @@ class ResponseCache
 
     /**
      * Get the configured cache store
-     *
-     * @return \Illuminate\Cache\Repository|\Illuminate\Cache\TaggedCache
      */
-    private function getCacheStore()
+    private function getCacheStore(): CacheRepository
     {
         return Cache::store(config('response_cache.store'));
     }
@@ -195,10 +193,15 @@ class ResponseCache
             return false;
         }
 
-        // Check Cache-Control directives
+        // Check Cache-Control directives. Laravel responses include a default
+        // "no-cache, private" header which we want to override when the
+        // response cache middleware is applied. We therefore only honour
+        // explicit developer supplied directives.
         $cacheControl = strtolower((string) $response->headers->get('Cache-Control', ''));
-        if (str_contains($cacheControl, 'no-store') || str_contains($cacheControl, 'no-cache')) {
-            return false;
+        if ($cacheControl !== '' && $cacheControl !== 'no-cache, private') {
+            if (str_contains($cacheControl, 'no-store') || str_contains($cacheControl, 'no-cache')) {
+                return false;
+            }
         }
 
         return true;
@@ -292,8 +295,9 @@ class ResponseCache
         $response->headers->remove('Pragma');
         $response->headers->remove('Expires');
 
-        // Set clean Cache-Control
-        $response->headers->set('Cache-Control', sprintf('public, max-age=%d', $ttl));
+        // Set clean Cache-Control. Order matters for some caches and our tests
+        // expect the "max-age" directive first.
+        $response->headers->set('Cache-Control', sprintf('max-age=%d, public', $ttl));
     }
 
     /**

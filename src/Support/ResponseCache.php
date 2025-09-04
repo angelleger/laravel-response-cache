@@ -43,13 +43,12 @@ final class ResponseCache
     public function clearAll(): void
     {
         $store = Cache::store(config('response_cache.store'));
-        $prefix = config('response_cache.prefix', 'resp_cache:');
 
         // This is a nuclear option - use with caution
         // For Redis, you might want to use SCAN to find keys with prefix
         if (method_exists($store->getStore(), 'flush')) {
             Log::warning('ResponseCache: Clearing entire cache store');
-            $store->flush();
+            $store->getStore()->flush();
         }
     }
 
