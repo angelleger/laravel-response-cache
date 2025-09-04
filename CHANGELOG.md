@@ -8,3 +8,4 @@ All notable changes to this project will be documented in this file.
 - New middleware options and configuration for vary headers/cookies and query filtering
 - Added Artisan commands `response-cache:clear` and `response-cache:stats`
 - Introduced optional atomic locks and configuration for stampede protection
+- Broadened Pint constraint to install on PHP 8.1 environments
