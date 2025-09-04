@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Route;
 use AngelLeger\ResponseCache\Facades\ResponseCache as Resp;
+use AngelLeger\ResponseCache\Contracts\KeyResolver;
 use function Pest\Laravel\get;
 use function Pest\Laravel\withHeaders;
 
@@ -74,4 +75,22 @@ it('can invalidate multiple tags independently', function () {
 
     expect(Cache::tags(['a'])->get('foo'))->toBeNull();
     expect(Cache::tags(['b'])->get('baz'))->toBeNull();
+});
+
+it('can retrieve cached responses by tag', function () {
+    Route::middleware('resp.cache:ttl=10,tag:foo')->get('/bar', function () {
+        return response('baz')->header('Cache-Control', 'public');
+    });
+
+    withHeaders(['Accept' => 'application/json'])->get('/bar');
+
+    $request = \Illuminate\Http\Request::create('/bar', 'GET', [], [], [], ['HTTP_ACCEPT' => 'application/json']);
+    /** @var KeyResolver $resolver */
+    $resolver = app(KeyResolver::class);
+    [$key] = $resolver->make($request);
+
+    $cached = Resp::getByTags(['foo'], $key);
+
+    expect($cached)->not->toBeNull();
+    expect($cached->getContent())->toBe('baz');
 });

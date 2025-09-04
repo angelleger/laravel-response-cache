@@ -233,6 +233,19 @@ if (ResponseCache::supportsTags()) {
 // Get cache statistics
 $stats = ResponseCache::stats();
 ```
+### Retrieve Cached Response by Tags
+
+```php
+use AngelLeger\ResponseCache\Facades\ResponseCache;
+use AngelLeger\ResponseCache\Contracts\KeyResolver;
+
+// Build cache key using the configured resolver
+[$key] = app(KeyResolver::class)->make(request());
+
+if ($response = ResponseCache::getByTags(['posts'], $key)) {
+    return $response; // Symfony Response with restored headers
+}
+```
 
 ### API Resource Example
 

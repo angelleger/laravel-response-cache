@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static void clearAll()
  * @method static array stats()
  * @method static bool supportsTags()
+ * @method static \Symfony\Component\HttpFoundation\Response|null getByTags(array $tags, string $key)
  */
 class ResponseCache extends Facade
 {

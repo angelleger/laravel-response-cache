@@ -6,6 +6,7 @@ namespace AngelLeger\ResponseCache\Support;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 
 final class ResponseCache
 {
@@ -36,6 +37,53 @@ final class ResponseCache
                     'error' => $e->getMessage()
                 ]);
             }
+        }
+    }
+
+    /**
+     * Retrieve a cached response by tags and key
+     *
+     * @param string[] $tags
+     */
+    public function getByTags(array $tags, string $key): ?Response
+    {
+        $store = Cache::store(config('response_cache.store'));
+
+        try {
+            $repo = $store->tags($tags);
+            /** @var array{status?:int,headers?:array<string,array<string>>,content?:string}|null $payload */
+            $payload = $repo->get($key);
+
+            if ($payload === null) {
+                return null;
+            }
+
+            $response = new Response(
+                $payload['content'] ?? '',
+                $payload['status'] ?? 200
+            );
+
+            foreach ($payload['headers'] ?? [] as $name => $values) {
+                foreach ((array) $values as $value) {
+                    $response->headers->set($name, $value, false);
+                }
+            }
+
+            $response->headers->set('X-Cache', 'HIT');
+
+            if (config('response_cache.debug', false)) {
+                Log::debug('ResponseCache: Retrieved cached response', ['key' => $key, 'tags' => $tags]);
+            }
+
+            return $response;
+        } catch (\BadMethodCallException $e) {
+            Log::warning('ResponseCache: Store does not support tags for retrieval', [
+                'store' => get_class($store),
+                'tags' => $tags,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
         }
     }
 
