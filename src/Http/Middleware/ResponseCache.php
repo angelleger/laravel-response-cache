@@ -8,18 +8,18 @@ use Closure;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use AngelLeger\ResponseCache\Contracts\KeyResolver;
 
 class ResponseCache
 {
     /**
-     * Uso: ->middleware('resp.cache:ttl=120,tag:posts,auth=false')
+     * Handle an incoming request.
      *
-     * Parámetros:
-     *  - ttl=SEGUNDOS (int)
-     *  - tag:foo      (múltiples)
-     *  - auth=true|false (permite cachear autenticados; por defecto false si guest_only=true)
+     * Usage: ->middleware('resp.cache:ttl=120,tag:posts,auth=false')
+     *
+     * @param string ...$params Middleware parameters
      */
     public function handle(Request $request, Closure $next, string ...$params): Response
     {
@@ -28,113 +28,176 @@ class ResponseCache
         }
 
         $cfg = config('response_cache');
-        [$ttl, $tags, $allowAuth] = $this->parse($params, $cfg);
+        [$ttl, $tags, $allowAuth] = $this->parseParams($params, $cfg);
 
+        // Check guest-only configuration
         if (($cfg['guest_only'] ?? true) && !$allowAuth && $request->user()) {
+            $this->debug('Skipping cache for authenticated user', ['user_id' => $request->user()->getAuthIdentifier()]);
             return $next($request);
         }
 
-        // Respeta no-store del cliente
-        if (str_contains(strtolower((string) $request->headers->get('Cache-Control')), 'no-store')) {
+        // Respect client's no-store directive
+        if ($this->hasNoStore($request)) {
+            $this->debug('Client requested no-store');
             return $next($request);
         }
 
         /** @var KeyResolver $resolver */
         $resolver = app(KeyResolver::class);
-        [$key] = $resolver->make($request);
+        [$key, $context] = $resolver->make($request);
 
-        $store = Cache::store(config('response_cache.store'));
-        $supportsTags = method_exists($store, 'supportsTags') ? $store->supportsTags() : method_exists($store->getStore(), 'tags');
+        $store = $this->getCacheStore();
+        $repo = $this->getCacheRepository($store, $tags);
 
-        /** @var CacheRepository $repo */
-        $repo = ($supportsTags && $tags) ? $store->tags($tags) : $store;
-
-        // HIT
+        // Try to get from cache
         if ($payload = $repo->get($key)) {
-            $hit = $this->unpack($payload);
+            $this->debug('Cache HIT', ['key' => $key, 'tags' => $tags]);
+            $response = $this->buildCachedResponse($payload, $ttl);
 
+            // Handle conditional requests (304 Not Modified)
             if ($cfg['etag'] ?? true) {
-                $ifNoneMatch = $request->headers->get('If-None-Match');
-                $etag        = $hit->headers->get('ETag');
-                if ($ifNoneMatch && $etag && $ifNoneMatch === $etag) {
-                    return new Response('', 304, $this->headers($hit));
+                if ($this->shouldReturn304($request, $response)) {
+                    $this->debug('Returning 304 Not Modified');
+                    return $this->build304Response($response);
                 }
             }
 
-            return $hit;
-        }
-
-        // MISS
-        /** @var Response $response */
-        $response = $next($request);
-
-        if (!$this->cacheable($response)) {
             return $response;
         }
 
-        // ETag
+        // Cache MISS - process request
+        $this->debug('Cache MISS', ['key' => $key, 'tags' => $tags]);
+
+        /** @var Response $response */
+        $response = $next($request);
+
+        if (!$this->isCacheable($response)) {
+            $this->debug('Response not cacheable', ['status' => $response->getStatusCode()]);
+            return $response;
+        }
+
+        // Generate ETag if needed
         if (($cfg['etag'] ?? true) && !$response->headers->has('ETag')) {
-            $response->headers->set('ETag', '"' . sha1($response->getContent()) . '"');
+            $response->headers->set('ETag', $this->generateETag($response));
         }
 
-        // Cache-Control razonable si no viene o si el middleware reemplaza encabezados privados
-        if (! $response->headers->has('Cache-Control')
-            || str_contains(strtolower((string) $response->headers->get('Cache-Control')), 'private')) {
-            $response->headers->set('Cache-Control', 'public, max-age=' . $ttl);
-        }
+        // Set proper Cache-Control headers
+        $this->setCacheHeaders($response, $ttl);
 
-        $repo->put($key, $this->pack($response), $ttl);
+        // Store in cache
+        $repo->put($key, $this->packResponse($response), $ttl);
+        $this->debug('Response cached', ['key' => $key, 'ttl' => $ttl]);
 
-        // Respuesta condicional post-guardado
-        if ($cfg['etag'] ?? true) {
-            $ifNoneMatch = $request->headers->get('If-None-Match');
-            $etag        = $response->headers->get('ETag');
-            if ($ifNoneMatch && $etag && $ifNoneMatch === $etag) {
-                return new Response('', 304, $this->headers($response));
-            }
+        // Handle conditional requests for fresh responses too
+        if (($cfg['etag'] ?? true) && $this->shouldReturn304($request, $response)) {
+            return $this->build304Response($response);
         }
 
         return $response;
     }
 
     /**
-     * Parses middleware parameters and merges with config defaults.
+     * Parse middleware parameters
+     *
      * @param string[] $params
-     * @param array<string,mixed> $cfg
+     * @param array<string,mixed> $config
      * @return array{0:int,1:array<int,string>,2:bool}
      */
-    private function parse(array $params, array $cfg): array
+    private function parseParams(array $params, array $config): array
     {
-        $ttl = (int) ($cfg['ttl'] ?? 300);
+        $ttl = (int) ($config['ttl'] ?? 300);
         $tags = [];
         $allowAuth = false;
 
-        foreach ($params as $p) {
-            if (str_starts_with($p, 'ttl=')) {
-                $ttl = max(1, (int) substr($p, 4));
-            } elseif (str_starts_with($p, 'tag:')) {
-                $tags[] = substr($p, 4);
-            } elseif (str_starts_with($p, 'auth=')) {
-                $allowAuth = filter_var(substr($p, 5), FILTER_VALIDATE_BOOL);
+        foreach ($params as $param) {
+            if (str_starts_with($param, 'ttl=')) {
+                $ttl = max(1, (int) substr($param, 4));
+            } elseif (str_starts_with($param, 'tag:')) {
+                $tag = substr($param, 4);
+                if ($tag !== '') {
+                    $tags[] = $tag;
+                }
+            } elseif (str_starts_with($param, 'auth=')) {
+                $allowAuth = filter_var(substr($param, 5), FILTER_VALIDATE_BOOL);
             }
         }
 
-        return [$ttl, array_values(array_filter($tags)), $allowAuth];
+        return [$ttl, array_unique($tags), $allowAuth];
     }
 
-    private function cacheable(Response $response): bool
+    /**
+     * Check if request has no-store directive
+     */
+    private function hasNoStore(Request $request): bool
     {
+        $cacheControl = strtolower((string) $request->headers->get('Cache-Control', ''));
+        return str_contains($cacheControl, 'no-store');
+    }
+
+    /**
+     * Get the configured cache store
+     *
+     * @return \Illuminate\Cache\Repository|\Illuminate\Cache\TaggedCache
+     */
+    private function getCacheStore()
+    {
+        return Cache::store(config('response_cache.store'));
+    }
+
+    /**
+     * Get cache repository with optional tag support
+     *
+     * @param mixed $store
+     * @param array<string> $tags
+     * @return CacheRepository
+     */
+    private function getCacheRepository($store, array $tags): CacheRepository
+    {
+        if (empty($tags)) {
+            return $store;
+        }
+
+        // Check if store supports tags
+        try {
+            return $store->tags($tags);
+        } catch (\BadMethodCallException $e) {
+            Log::warning('ResponseCache: Store does not support tags', [
+                'store' => get_class($store),
+                'tags' => $tags
+            ]);
+            return $store;
+        }
+    }
+
+    /**
+     * Check if response is cacheable
+     */
+    private function isCacheable(Response $response): bool
+    {
+        // Only cache 200 OK responses
         if ($response->getStatusCode() !== 200) {
             return false;
         }
 
-        $type = strtolower((string) $response->headers->get('Content-Type', ''));
-        if (!str_contains($type, 'application/json') && !str_contains($type, 'text/html')) {
+        // Check Content-Type
+        $contentType = strtolower((string) $response->headers->get('Content-Type', ''));
+        $allowedTypes = ['application/json', 'text/html', 'application/xml', 'text/xml'];
+
+        $typeAllowed = false;
+        foreach ($allowedTypes as $type) {
+            if (str_contains($contentType, $type)) {
+                $typeAllowed = true;
+                break;
+            }
+        }
+
+        if (!$typeAllowed) {
             return false;
         }
 
-        $cc = strtolower((string) $response->headers->get('Cache-Control', ''));
-        if (str_contains($cc, 'no-store')) {
+        // Check Cache-Control directives
+        $cacheControl = strtolower((string) $response->headers->get('Cache-Control', ''));
+        if (str_contains($cacheControl, 'no-store') || str_contains($cacheControl, 'no-cache')) {
             return false;
         }
 
@@ -142,48 +205,151 @@ class ResponseCache
     }
 
     /**
-     * pack a response into a storable array
-     * @return array{status:int,headers:array<string,list<string>>,body:string}
+     * Pack response for storage
+     *
+     * @return array{status:int,headers:array<string,array<string>>,content:string}
      */
-    private function pack(Response $response): array
+    private function packResponse(Response $response): array
     {
         return [
-            'status'  => $response->getStatusCode(),
-            'headers' => $this->headers($response),
-            'body'    => $response->getContent(),
+            'status' => $response->getStatusCode(),
+            'headers' => $this->filterHeaders($response),
+            'content' => (string) $response->getContent(),
         ];
     }
 
     /**
-     * unpack a stored array into a Response
-     * @param array{status?:int,headers?:array<string,list<string>>,body?:string} $payload
+     * Build response from cached data
+     *
+     * @param array{status?:int,headers?:array<string,array<string>>,content?:string} $payload
      */
-    private function unpack(array $payload): Response
+    private function buildCachedResponse(array $payload, int $ttl): Response
     {
-        $resp = new Response($payload['body'] ?? '', $payload['status'] ?? 200);
-        foreach ($payload['headers'] ?? [] as $k => $vals) {
-            foreach ((array) $vals as $v) {
-                $resp->headers->set($k, $v, false);
+        $response = new Response(
+            $payload['content'] ?? '',
+            $payload['status'] ?? 200
+        );
+
+        // Restore headers
+        foreach ($payload['headers'] ?? [] as $name => $values) {
+            foreach ((array) $values as $value) {
+                $response->headers->set($name, $value, false);
             }
         }
-        return $resp;
+
+        // Ensure proper cache headers
+        $this->setCacheHeaders($response, $ttl);
+
+        // Add cache hit indicator
+        $response->headers->set('X-Cache', 'HIT');
+
+        return $response;
     }
 
     /**
-     * Filter out headers that should not be cached
+     * Filter headers for caching
      *
-     * @return array<string,list<string>>
+     * @return array<string,array<string>>
      */
-    private function headers(Response $response): array
+    private function filterHeaders(Response $response): array
     {
-        $exclude = ['Set-Cookie', 'Transfer-Encoding', 'Content-Length'];
+        $exclude = [
+            'Set-Cookie',
+            'Transfer-Encoding',
+            'Content-Length',
+            'Connection',
+            'Keep-Alive',
+            'Proxy-Authenticate',
+            'Proxy-Authorization',
+            'TE',
+            'Trailers',
+            'Upgrade',
+            'phpdebugbar-id',
+            'X-Debug-Token',
+            'X-Debug-Token-Link',
+        ];
+
         $headers = [];
-        foreach ($response->headers->allPreserveCase() as $k => $vals) {
-            if (in_array($k, $exclude, true)) {
+        foreach ($response->headers->all() as $name => $values) {
+            $normalizedName = str_replace('_', '-', ucwords(strtolower(str_replace('-', '_', $name)), '_'));
+
+            if (in_array($normalizedName, $exclude, true)) {
                 continue;
             }
-            $headers[$k] = is_array($vals) ? $vals : [$vals];
+
+            $headers[$normalizedName] = (array) $values;
         }
+
         return $headers;
+    }
+
+    /**
+     * Set cache control headers
+     */
+    private function setCacheHeaders(Response $response, int $ttl): void
+    {
+        // Remove conflicting headers
+        $response->headers->remove('Pragma');
+        $response->headers->remove('Expires');
+
+        // Set clean Cache-Control
+        $response->headers->set('Cache-Control', sprintf('public, max-age=%d', $ttl));
+    }
+
+    /**
+     * Generate ETag for response
+     */
+    private function generateETag(Response $response): string
+    {
+        $content = (string) $response->getContent();
+        return '"' . sha1($content) . '"';
+    }
+
+    /**
+     * Check if should return 304 Not Modified
+     */
+    private function shouldReturn304(Request $request, Response $response): bool
+    {
+        $ifNoneMatch = $request->headers->get('If-None-Match');
+        if (!$ifNoneMatch) {
+            return false;
+        }
+
+        $etag = $response->headers->get('ETag');
+        if (!$etag) {
+            return false;
+        }
+
+        return $ifNoneMatch === $etag;
+    }
+
+    /**
+     * Build 304 Not Modified response
+     */
+    private function build304Response(Response $response): Response
+    {
+        $notModified = new Response('', 304);
+
+        // Copy relevant headers
+        $headersToKeep = ['Cache-Control', 'ETag', 'Vary', 'Date', 'Last-Modified'];
+        foreach ($headersToKeep as $header) {
+            if ($response->headers->has($header)) {
+                $notModified->headers->set($header, $response->headers->get($header));
+            }
+        }
+
+        return $notModified;
+    }
+
+    /**
+     * Debug logging
+     *
+     * @param array<string,mixed> $context
+     */
+    private function debug(string $message, array $context = []): void
+    {
+        if (config('response_cache.debug', false)) {
+            Log::debug('ResponseCache: ' . $message, $context);
+        }
     }
 }

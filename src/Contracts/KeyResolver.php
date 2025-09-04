@@ -9,7 +9,7 @@ use Illuminate\Http\Request;
 interface KeyResolver
 {
     /**
-     * Devuelve [cacheKey, contextArray] para diagnóstico/observabilidad.
+     * Generate cache key and context data for the request
      *
      * @return array{0:string,1:array<string,string>}
      */

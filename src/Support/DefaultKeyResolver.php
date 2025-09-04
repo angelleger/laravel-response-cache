@@ -9,40 +9,50 @@ use AngelLeger\ResponseCache\Contracts\KeyResolver;
 
 final class DefaultKeyResolver implements KeyResolver
 {
+    /**
+     * @param string[] $varyHeaders
+     */
     public function __construct(
         private readonly string $prefix,
-        /** @var string[] */
         private readonly array $varyHeaders = [],
     ) {}
 
     /**
-     * Returns [cacheKey, contextArray] for diagnostics/observability.
+     * Generate cache key and context
+     *
      * @return array{0:string,1:array<string,string>}
      */
     public function make(Request $request): array
     {
-        $includeIp = (bool) config('response_cache.include_ip', false);
-
         $parts = [
-            'm'  => $request->getMethod(),
-            'u'  => $request->fullUrl(),
+            'method' => $request->getMethod(),
+            'url' => $request->fullUrl(),
         ];
 
-        if ($includeIp) {
-            $parts['ip'] = $request->ip();
+        // Include IP if configured
+        if (config('response_cache.include_ip', false)) {
+            $parts['ip'] = (string) $request->ip();
         }
 
-        foreach ($this->varyHeaders as $h) {
-            $parts['h:' . strtolower($h)] = (string) $request->headers->get($h);
+        // Include vary headers
+        foreach ($this->varyHeaders as $header) {
+            $normalizedHeader = strtolower($header);
+            $value = (string) $request->headers->get($header, '');
+            if ($value !== '') {
+                $parts['header:' . $normalizedHeader] = $value;
+            }
         }
 
+        // Include user ID if authenticated
         if ($request->user()) {
-            $parts['uid'] = (string) $request->user()->getAuthIdentifier();
+            $parts['user_id'] = (string) $request->user()->getAuthIdentifier();
         }
 
-        $raw  = json_encode($parts, JSON_UNESCAPED_SLASHES);
+        // Generate deterministic key
+        $raw = json_encode($parts, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $hash = sha1($raw);
+        $key = $this->prefix . $hash;
 
-        return [$this->prefix . $hash, $parts];
+        return [$key, $parts];
     }
 }

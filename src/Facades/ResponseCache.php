@@ -8,6 +8,9 @@ use Illuminate\Support\Facades\Facade;
 
 /**
  * @method static void invalidateByTags(array $tags)
+ * @method static void clearAll()
+ * @method static array stats()
+ * @method static bool supportsTags()
  */
 class ResponseCache extends Facade
 {
