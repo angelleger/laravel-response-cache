@@ -3,4 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-- Initial public release with middleware caching, tags invalidation, ETag/304, CI, and tests.
+- Switched to key-based caching strategy with deterministic keys including method, path, query, locale and auth guard
+- Added helpers `makeKey`, `rememberResponse`, and `forgetByKey`
+- New middleware options and configuration for vary headers/cookies and query filtering
+- Added Artisan commands `response-cache:clear` and `response-cache:stats`

@@ -4,133 +4,233 @@ declare(strict_types=1);
 
 namespace AngelLeger\ResponseCache\Support;
 
+use Closure;
+use DateTimeInterface;
+use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
-final class ResponseCache
+/**
+ * Lightweight key based response cache helper.
+ */
+class ResponseCache
 {
-    /**
-     * Invalidate cache entries by tags
-     *
-     * @param string[] $tags
-     */
-    public function invalidateByTags(array $tags): void
+    private Repository $store;
+
+    public function __construct(?Repository $store = null)
     {
-        if (empty($tags)) {
-            return;
+        $this->store = $store ?? Cache::store(config('response_cache.store'));
+    }
+
+    /**
+     * Build a cache key for the given request.
+     *
+     * @param  array<string,string>  $overrides
+     */
+    public function makeKey(Request $request, array $overrides = []): string
+    {
+        $method = strtoupper($overrides['method'] ?? $request->getMethod());
+        $path = $overrides['path'] ?? ($request->route()?->getName() ?? $request->path());
+        $query = $overrides['normalized_query'] ?? $this->normalizedQuery($request);
+        $locale = $overrides['locale'] ?? $request->getLocale();
+        $guard = $overrides['auth_guard_or_guest'] ?? $this->guard();
+
+        $parts = [$method, $path, $query, $locale, $guard];
+
+        return config('response_cache.key_prefix').implode(':', $parts);
+    }
+
+    /**
+     * Remember a response for the current request.
+     */
+    public function rememberResponse(Request $request, Closure $callback, DateTimeInterface|int $ttl): Response
+    {
+        $key = $this->makeKey($request);
+        if ($payload = $this->store->get($key)) {
+            return $this->buildResponse($payload);
         }
 
-        $store = Cache::store(config('response_cache.store'));
+        /** @var Response $response */
+        $response = $callback($request);
+        $this->store($key, $request, $response, $ttl);
 
-        foreach ($tags as $tag) {
-            try {
-                $store->tags([$tag])->flush();
+        return $response;
+    }
 
-                if (config('response_cache.debug', false)) {
-                    Log::debug('ResponseCache: Invalidated tag', ['tag' => $tag]);
-                }
-            } catch (\BadMethodCallException $e) {
-                Log::warning('ResponseCache: Store does not support tags for invalidation', [
-                    'store' => get_class($store),
-                    'tag' => $tag,
-                    'error' => $e->getMessage()
-                ]);
-            }
+    /**
+     * Retrieve cached response by key.
+     */
+    public function get(string $key): ?Response
+    {
+        $payload = $this->store->get($key);
+
+        return $payload ? $this->buildResponse($payload) : null;
+    }
+
+    /**
+     * Store response by key.
+     */
+    public function store(string $key, Request $request, Response $response, DateTimeInterface|int $ttl): void
+    {
+        $this->store->put($key, $this->packResponse($response), $ttl);
+        $this->indexKey($request, $key, $ttl);
+    }
+
+    /**
+     * Forget a cached response by key.
+     */
+    public function forgetByKey(string $key): void
+    {
+        $this->store->forget($key);
+    }
+
+    /**
+     * Forget all responses associated with the given route name.
+     */
+    public function forgetRoute(string $routeName): void
+    {
+        $index = $this->indexName($routeName);
+        $keys = $this->store->pull($index) ?? [];
+        foreach (array_keys($keys) as $key) {
+            $this->store->forget($key);
         }
     }
 
     /**
-     * Retrieve a cached response by tags and key
+     * Basic cache statistics.
      *
-     * @param string[] $tags
-     */
-    public function getByTags(array $tags, string $key): ?Response
-    {
-        $store = Cache::store(config('response_cache.store'));
-
-        try {
-            $repo = $store->tags($tags);
-            /** @var array{status?:int,headers?:array<string,array<string>>,content?:string}|null $payload */
-            $payload = $repo->get($key);
-
-            if ($payload === null) {
-                return null;
-            }
-
-            $response = new Response(
-                $payload['content'] ?? '',
-                $payload['status'] ?? 200
-            );
-
-            foreach ($payload['headers'] ?? [] as $name => $values) {
-                foreach ((array) $values as $value) {
-                    $response->headers->set($name, $value, false);
-                }
-            }
-
-            $response->headers->set('X-Cache', 'HIT');
-
-            if (config('response_cache.debug', false)) {
-                Log::debug('ResponseCache: Retrieved cached response', ['key' => $key, 'tags' => $tags]);
-            }
-
-            return $response;
-        } catch (\BadMethodCallException $e) {
-            Log::warning('ResponseCache: Store does not support tags for retrieval', [
-                'store' => get_class($store),
-                'tags' => $tags,
-                'error' => $e->getMessage(),
-            ]);
-
-            return null;
-        }
-    }
-
-    /**
-     * Clear all cached responses
-     */
-    public function clearAll(): void
-    {
-        $store = Cache::store(config('response_cache.store'));
-
-        // This is a nuclear option - use with caution
-        // For Redis, you might want to use SCAN to find keys with prefix
-        if (method_exists($store->getStore(), 'flush')) {
-            Log::warning('ResponseCache: Clearing entire cache store');
-            $store->getStore()->flush();
-        }
-    }
-
-    /**
-     * Get cache statistics (if available)
-     *
-     * @return array<string,mixed>
+     * @return array<string, mixed>
      */
     public function stats(): array
     {
-        $store = Cache::store(config('response_cache.store'));
-
-        // This would need implementation based on your cache driver
-        // For Redis, you could use INFO command
         return [
-            'driver' => get_class($store->getStore()),
-            'supports_tags' => $this->supportsTags(),
+            'driver' => get_class($this->store->getStore()),
         ];
     }
 
     /**
-     * Check if current cache store supports tags
+     * -----------------------------------------------------------------
+     * Internal helpers
+     * -----------------------------------------------------------------
      */
-    public function supportsTags(): bool
-    {
-        $store = Cache::store(config('response_cache.store'));
 
-        try {
-            $store->tags(['test']);
-            return true;
-        } catch (\BadMethodCallException $e) {
-            return false;
+    /**
+     * Build normalized query string including vary headers and cookies.
+     */
+    private function normalizedQuery(Request $request): string
+    {
+        $params = $request->query();
+
+        $include = (array) config('response_cache.include_query_params', []);
+        if ($include) {
+            $params = array_intersect_key($params, array_flip($include));
         }
+
+        $ignore = (array) config('response_cache.ignore_query_params', []);
+        foreach ($ignore as $key) {
+            if (str_ends_with($key, '*')) {
+                $prefix = substr($key, 0, -1);
+                foreach (array_keys($params) as $k) {
+                    if (str_starts_with($k, $prefix)) {
+                        unset($params[$k]);
+                    }
+                }
+            } else {
+                unset($params[$key]);
+            }
+        }
+
+        foreach ((array) config('response_cache.vary_on_headers', []) as $header) {
+            $value = $request->headers->get($header);
+            if ($value !== null && $value !== '') {
+                $params['h_'.strtolower($header)] = $value;
+            }
+        }
+
+        foreach ((array) config('response_cache.vary_on_cookies', []) as $cookie) {
+            $value = $request->cookies->get($cookie);
+            if ($value !== null && $value !== '') {
+                $params['c_'.$cookie] = $value;
+            }
+        }
+
+        ksort($params);
+
+        return http_build_query($params);
+    }
+
+    /**
+     * Determine authenticated guard or guest.
+     */
+    private function guard(): string
+    {
+        $guards = array_keys(config('auth.guards', []));
+        foreach ($guards as $guard) {
+            if (Auth::guard($guard)->check()) {
+                return $guard;
+            }
+        }
+
+        return 'guest';
+    }
+
+    /**
+     * Pack a response for storage.
+     *
+     * @return array{status:int,headers:array<string,array<string>>,content:string}
+     */
+    private function packResponse(Response $response): array
+    {
+        return [
+            'status' => $response->getStatusCode(),
+            'headers' => $response->headers->all(),
+            'content' => (string) $response->getContent(),
+        ];
+    }
+
+    /**
+     * Rebuild a response from stored payload.
+     *
+     * @param  array{status:int,headers:array<string,array<string>>,content:string}  $payload
+     */
+    private function buildResponse(array $payload): Response
+    {
+        $response = new Response($payload['content'], $payload['status']);
+        foreach ($payload['headers'] as $name => $values) {
+            foreach ((array) $values as $value) {
+                $response->headers->set($name, $value, false);
+            }
+        }
+        $response->headers->set('X-Cache', 'HIT');
+
+        return $response;
+    }
+
+    /**
+     * Store key in route index for easier invalidation.
+     */
+    private function indexKey(Request $request, string $key, DateTimeInterface|int $ttl): void
+    {
+        $route = $request->route()?->getName();
+        if (! $route) {
+            return;
+        }
+        $index = $this->indexName($route);
+        $keys = $this->store->get($index, []);
+        $keys[$key] = true;
+
+        $limit = (int) config('response_cache.index_limit', 1000);
+        if (count($keys) > $limit) {
+            $keys = array_slice($keys, -$limit, null, true);
+        }
+
+        $this->store->put($index, $keys, $ttl);
+    }
+
+    private function indexName(string $route): string
+    {
+        return config('response_cache.key_prefix').'index:'.$route;
     }
 }

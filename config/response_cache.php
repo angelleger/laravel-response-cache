@@ -5,9 +5,9 @@ declare(strict_types=1);
 return [
     /*
     |--------------------------------------------------------------------------
-    | Default TTL
+    | Default Time To Live
     |--------------------------------------------------------------------------
-    | Time to live in seconds for cached responses
+    | Lifetime in seconds for cached responses when no explicit ttl is given.
     */
     'ttl' => 300,
 
@@ -15,59 +15,64 @@ return [
     |--------------------------------------------------------------------------
     | Cache Store
     |--------------------------------------------------------------------------
-    | Which cache store to use. null uses the default store.
-    | Must support tags for invalidation features.
+    | Which cache store to use. Null uses the default application cache store.
     */
     'store' => env('RESPONSE_CACHE_STORE'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Guest Only
-    |--------------------------------------------------------------------------
-    | Whether to only cache responses for guests (not authenticated users)
-    */
-    'guest_only' => true,
-
-    /*
-    |--------------------------------------------------------------------------
-    | Vary Headers
-    |--------------------------------------------------------------------------
-    | Headers that should vary the cache key
-    */
-    'vary_headers' => [
-        'Accept',
-        'Accept-Language',
-        'X-Locale',
-    ],
 
     /*
     |--------------------------------------------------------------------------
     | Cache Key Prefix
     |--------------------------------------------------------------------------
     */
-    'prefix' => 'resp_cache:',
+    'key_prefix' => 'resp_cache:',
 
     /*
     |--------------------------------------------------------------------------
-    | ETag Support
+    | Only cache responses for guests by default
     |--------------------------------------------------------------------------
-    | Enable ETag generation and 304 Not Modified responses
     */
-    'etag' => true,
+    'guest_only' => true,
 
     /*
     |--------------------------------------------------------------------------
-    | Include IP Address
+    | Headers and cookies that should be included in the cache key
     |--------------------------------------------------------------------------
-    | Include client IP in cache key (warning: can fragment cache significantly)
     */
-    'include_ip' => false,
+    'vary_on_headers' => [
+        'Accept',
+        'Accept-Language',
+    ],
+
+    'vary_on_cookies' => [],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Query string handling
+    |--------------------------------------------------------------------------
+    | include_query_params - when not empty only these parameters are used
+    | ignore_query_params  - parameters to ignore (supports * suffix)
+    */
+    'include_query_params' => [],
+    'ignore_query_params' => ['_', 'utm_*'],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Allowed response status codes for caching
+    |--------------------------------------------------------------------------
+    */
+    'status_whitelist' => [200],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Maximum payload size in kilobytes. Null means unlimited.
+    |--------------------------------------------------------------------------
+    */
+    'max_payload_kb' => null,
 
     /*
     |--------------------------------------------------------------------------
     | Debug Mode
     |--------------------------------------------------------------------------
-    | Enable debug logging for troubleshooting
     */
     'debug' => env('RESPONSE_CACHE_DEBUG', false),
 ];

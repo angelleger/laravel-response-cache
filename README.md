@@ -1,441 +1,125 @@
 # Laravel Response Cache
 
-Production-grade response caching for Laravel 10/11 with advanced features:
+Key-based full response caching for Laravel 10+ applications. The package stores complete GET/HEAD responses in the configured cache store using deterministic keys. It offers a small helper API, middleware, and artisan commands for managing cached responses without relying on cache tags.
 
-- 🚀 Full-response caching for GET/HEAD requests
-- ⏱️ Per-route TTL configuration
-- 🏷️ Redis tags for granular invalidation
-- 🔐 Safe authentication variation (guest-only by default)
-- 📦 ETag generation and 304 Not Modified support
-- 🎯 Vary by configurable headers
-- 🛠️ Easy middleware alias: `resp.cache`
+## Requirements
+
+- PHP 8.2 or higher
+- Laravel 10.x
 
 ## Installation
 
 ```bash
 composer require angelleger/laravel-response-cache
-```
-
-Publish configuration (optional):
-
-```bash
 php artisan vendor:publish --tag=response-cache-config
 ```
 
 ## Configuration
 
-Ensure your cache store supports tags (e.g., Redis):
-
-```env
-CACHE_STORE=redis
-REDIS_CLIENT=phpredis
-RESPONSE_CACHE_STORE=redis # Optional, defaults to CACHE_STORE
-RESPONSE_CACHE_DEBUG=true  # Enable debug logging
-```
-
-## Usage
-
-### Basic Usage
+`config/response_cache.php`
 
 ```php
-// Cache for default TTL (300 seconds)
-Route::get('/posts', [PostController::class, 'index'])
-    ->middleware('resp.cache');
-
-// Cache with custom TTL
-Route::get('/posts/{post}', [PostController::class, 'show'])
-    ->middleware('resp.cache:ttl=120');
-```
-
-### With Tags for Invalidation
-
-```php
-// Tag-based caching
-Route::get('/posts', [PostController::class, 'index'])
-    ->middleware('resp.cache:ttl=300,tag:posts');
-
-Route::get('/posts/{post}', [PostController::class, 'show'])
-    ->middleware('resp.cache:ttl=120,tag:posts,tag:post:{post}');
-
-// Invalidate on mutations
-use AngelLeger\ResponseCache\Facades\ResponseCache;
-
-class PostController extends Controller
-{
-    public function update(Request $request, Post $post)
-    {
-        $post->update($request->validated());
-        
-        // Invalidate related caches
-        ResponseCache::invalidateByTags([
-            'posts',
-            "post:{$post->id}"
-        ]);
-        
-        return response()->json($post);
-    }
-}
-```
-
-### Allow Caching for Authenticated Users
-
-```php
-// By default, only guests are cached
-// To cache authenticated users on specific routes:
-Route::get('/dashboard', [DashboardController::class, 'index'])
-    ->middleware('auth', 'resp.cache:ttl=60,auth=true');
-```
-
-### Console Commands
-
-```bash
-# Flush by tags
-php artisan response-cache:flush --tags=posts,post:42
-
-# Clear entire cache (use with caution!)
-php artisan response-cache:flush --all
-```
-
-## Configuration Options
-
-```php
-// config/response_cache.php
-
 return [
-    'ttl' => 300,                    // Default TTL in seconds
-    'store' => null,                 // Cache store (null = default)
-    'guest_only' => true,            // Only cache for guests
-    'vary_headers' => [              // Headers that vary the cache
-        'Accept',
-        'Accept-Language',
-        'X-Locale',
-    ],
-    'prefix' => 'resp_cache:',       // Cache key prefix
-    'etag' => true,                  // Enable ETag/304 support
-    'include_ip' => false,           // Include IP in cache key
-    'debug' => false,                // Enable debug logging
+    'ttl' => 300, // default lifetime in seconds
+    'store' => env('RESPONSE_CACHE_STORE'), // cache store to use
+    'key_prefix' => 'resp_cache:', // prefix for all keys and indexes
+    'guest_only' => true, // only cache guests unless auth=true is passed to middleware
+    'vary_on_headers' => ['Accept', 'Accept-Language'], // headers included in the key
+    'vary_on_cookies' => [], // cookies included in the key
+    'include_query_params' => [], // when set, only these query parameters are used
+    'ignore_query_params' => ['_', 'utm_*'], // query parameters to ignore (supports * suffix)
+    'status_whitelist' => [200], // only cache these response codes
+    'max_payload_kb' => null, // skip responses larger than this (in kilobytes)
+    'etag' => true, // automatically add ETag header to cached responses
+    'debug' => env('RESPONSE_CACHE_DEBUG', false), // enable debug helpers
 ];
 ```
 
-## Testing with Laravel Sail
+### Configuration Notes
 
-### 1. Setup Redis in Sail
+- **ttl**: default time-to-live for cached responses when no explicit value is supplied.
+- **store**: cache store to use; `null` uses the application's default store.
+- **key_prefix**: string prepended to every cache key and route index entry.
+- **guest_only**: when `true`, authenticated users are skipped unless the middleware parameter `auth=true` is provided.
+- **vary_on_headers / vary_on_cookies**: header and cookie names that should contribute to the cache key.
+- **include_query_params**: if non-empty, only these query parameters are considered when building the key.
+- **ignore_query_params**: query parameters to discard; supports a trailing `*` wildcard.
+- **status_whitelist**: response status codes eligible for caching.
+- **max_payload_kb**: maximum size of the response body; larger responses are bypassed.
+- **etag**: toggle automatic generation of an `ETag` header when caching.
+- **debug**: when enabled, exposes additional debug headers.
 
-```yaml
-# docker-compose.yml
-services:
-    laravel.test:
-        # ...
-    redis:
-        image: 'redis:alpine'
-        ports:
-            - '${FORWARD_REDIS_PORT:-6379}:6379'
-        volumes:
-            - 'sail-redis:/data'
-        networks:
-            - sail
+## Cache Key Strategy
+
+Keys follow the pattern:
+
+```
+{method}:{path-or-route}:{normalized-query}:{locale}:{guard-or-guest}
 ```
 
-### 2. Test Script
+The query segment is created by sorting parameters, removing ignored keys, and injecting `vary_on_headers`/`vary_on_cookies` values as pseudo parameters (`h_header` / `c_cookie`). The active authentication guard name (or `guest`) and the request locale are appended to avoid collisions.
 
-Create `routes/test.php`:
+## Middleware
+
+Apply the `resp.cache` middleware to any GET/HEAD route that should be cached.
 
 ```php
-<?php
+Route::get('/posts', fn () => Post::all())
+    ->middleware('resp.cache:ttl=120');
 
-use Illuminate\Support\Facades\Route;
-use AngelLeger\ResponseCache\Facades\ResponseCache;
-
-Route::get('/test-cache', function () {
-    return response()->json([
-        'time' => now()->toISOString(),
-        'random' => rand(1000, 9999),
-        'cache_support' => ResponseCache::supportsTags()
-    ]);
-})->middleware('resp.cache:ttl=60,tag:test');
+// Allow authenticated users to be cached
+Route::get('/dashboard', fn () => view('dashboard'))
+    ->middleware('auth', 'resp.cache:ttl=60,auth=true');
 ```
 
-### 3. Verify with cURL
+### Middleware Parameters
 
-```bash
-# First request (MISS)
-curl -i http://localhost/test-cache
+- `ttl=<seconds>` – override the default TTL for this route.
+- `auth=true` – cache authenticated responses even if `guest_only` is enabled.
 
-# Second request (HIT - same data)
-curl -i http://localhost/test-cache
+Responses are cached only when:
 
-# Check for X-Cache header
-curl -i http://localhost/test-cache | grep X-Cache
-# Should show: X-Cache: HIT
+- The HTTP method is GET or HEAD.
+- The response status code appears in `status_whitelist`.
+- The response size does not exceed `max_payload_kb` (when set).
+- The request does not contain `Cache-Control: no-store`.
 
-# Test 304 Not Modified
-ETAG=$(curl -s -I http://localhost/test-cache | grep ETag | cut -d' ' -f2)
-curl -i -H "If-None-Match: $ETAG" http://localhost/test-cache
-# Should return 304
+Cached responses include an `X-Cache: HIT` header for debugging. You can disable caching on a per-request basis by sending `Cache-Control: no-store` from the client or controller.
 
-# Invalidate cache
-sail artisan response-cache:flush --tags=test
-
-# Next request should be fresh
-curl -i http://localhost/test-cache
-```
-
-### 4. Monitor Redis
-
-```bash
-# Watch Redis keys in real-time
-sail redis-cli MONITOR
-
-# Check keys
-sail redis-cli KEYS "resp_cache:*"
-
-# Check tag entries
-sail redis-cli SMEMBERS "tag:test:entries"
-```
-
-## Advanced Usage
-
-### Custom Key Resolver
-
-```php
-use AngelLeger\ResponseCache\Contracts\KeyResolver;
-use Illuminate\Http\Request;
-
-class CustomKeyResolver implements KeyResolver
-{
-    public function make(Request $request): array
-    {
-        // Custom logic for cache key generation
-        $key = 'custom:' . sha1($request->fullUrl());
-        $context = ['url' => $request->fullUrl()];
-        
-        return [$key, $context];
-    }
-}
-
-// Register in AppServiceProvider
-$this->app->bind(KeyResolver::class, CustomKeyResolver::class);
-```
-
-### Programmatic Invalidation
+## Helper API
 
 ```php
 use AngelLeger\ResponseCache\Facades\ResponseCache;
 
-// In your controllers or events
-ResponseCache::invalidateByTags(['posts']);
-
-// Check if tags are supported
-if (ResponseCache::supportsTags()) {
-    ResponseCache::invalidateByTags(['products', 'category:1']);
-}
-
-// Get cache statistics
-$stats = ResponseCache::stats();
-```
-### Retrieve Cached Response by Tags
-
-```php
-use AngelLeger\ResponseCache\Facades\ResponseCache;
-use AngelLeger\ResponseCache\Contracts\KeyResolver;
-
-// Build cache key using the configured resolver
-[$key] = app(KeyResolver::class)->make(request());
-
-if ($response = ResponseCache::getByTags(['posts'], $key)) {
-    return $response; // Symfony Response with restored headers
-}
+$key = ResponseCache::makeKey(request());
+$response = ResponseCache::rememberResponse(request(), fn () => response('ok'), 60);
+ResponseCache::forgetByKey($key);
+ResponseCache::forgetRoute('posts.index');
 ```
 
-### API Resource Example
+- **makeKey(Request $request, array $overrides = [])** – build the cache key used for the request.
+- **rememberResponse(Request $request, Closure $callback, DateTimeInterface|int $ttl)** – return the cached response or execute the callback and store the result.
+- **forgetByKey(string $key)** – remove a cached response.
+- **forgetRoute(string $routeName)** – remove all cached responses for the route (uses a bounded key index, max 1000 entries).
 
-```php
-// routes/api.php
-Route::apiResource('posts', PostController::class);
-
-// PostController.php
-class PostController extends Controller
-{
-    public function __construct()
-    {
-        // Cache index and show actions
-        $this->middleware('resp.cache:ttl=300,tag:posts')
-            ->only(['index']);
-            
-        $this->middleware('resp.cache:ttl=600,tag:posts,tag:post:{post}')
-            ->only(['show']);
-    }
-    
-    public function store(Request $request)
-    {
-        $post = Post::create($request->validated());
-        ResponseCache::invalidateByTags(['posts']);
-        return new PostResource($post);
-    }
-    
-    public function update(Request $request, Post $post)
-    {
-        $post->update($request->validated());
-        ResponseCache::invalidateByTags(['posts', "post:{$post->id}"]);
-        return new PostResource($post);
-    }
-    
-    public function destroy(Post $post)
-    {
-        $post->delete();
-        ResponseCache::invalidateByTags(['posts', "post:{$post->id}"]);
-        return response()->noContent();
-    }
-}
-```
-
-## Debugging
-
-Enable debug mode to see cache operations:
-
-```env
-RESPONSE_CACHE_DEBUG=true
-```
-
-Then check your logs:
+## Artisan Commands
 
 ```bash
-tail -f storage/logs/laravel.log | grep ResponseCache
+php artisan response-cache:clear --key="get:posts::en:guest"
+php artisan response-cache:clear --route=posts.index
+php artisan response-cache:stats
 ```
 
-Or with Sail:
+- **response-cache:clear** – clear by exact key or by route name (uses the internal index).
+- **response-cache:stats** – show basic cache information such as the underlying driver.
 
-```bash
-sail artisan tail --filter="ResponseCache"
-```
+## Caveats
 
-## Performance Tips
-
-1. **Use specific tags**: More granular tags allow for precise invalidation
-2. **Set appropriate TTLs**: Balance freshness with performance
-3. **Monitor hit rates**: Use Redis INFO stats to track cache effectiveness
-4. **Avoid caching personalized content**: Unless using auth=true carefully
-5. **Use CDN for static assets**: This package is for dynamic content
-
-## Cache Headers Explained
-
-The middleware automatically manages these headers:
-
-- **Cache-Control**: Set to `public, max-age={ttl}` for cached responses
-- **ETag**: Generated from response content for validation
-- **X-Cache**: Added to indicate cache hits (`HIT` or `MISS`)
-- **Vary**: Preserved to indicate cache variations
-
-## Common Use Cases
-
-### E-commerce Product Listings
-
-```php
-Route::get('/products', [ProductController::class, 'index'])
-    ->middleware('resp.cache:ttl=300,tag:products');
-
-Route::get('/categories/{category}/products', [ProductController::class, 'byCategory'])
-    ->middleware('resp.cache:ttl=300,tag:products,tag:category:{category}');
-
-// Invalidate when products change
-Event::listen(ProductUpdated::class, function ($event) {
-    ResponseCache::invalidateByTags([
-        'products',
-        'category:' . $event->product->category_id
-    ]);
-});
-```
-
-### Blog with Comments
-
-```php
-Route::get('/posts/{post}', [PostController::class, 'show'])
-    ->middleware('resp.cache:ttl=600,tag:post:{post}');
-
-// When a comment is added
-public function storeComment(Request $request, Post $post)
-{
-    $comment = $post->comments()->create($request->validated());
-    ResponseCache::invalidateByTags(["post:{$post->id}"]);
-    return response()->json($comment);
-}
-```
-
-### API Rate Limiting with Cache
-
-```php
-Route::middleware(['throttle:api', 'resp.cache:ttl=60'])->group(function () {
-    Route::get('/api/search', [SearchController::class, 'search']);
-});
-```
-
-## Troubleshooting
-
-### Cache not working?
-
-1. Verify Redis connection:
-```bash
-sail redis-cli ping
-```
-
-2. Check if store supports tags:
-```php
-php artisan tinker
->>> ResponseCache::supportsTags()
-```
-
-3. Enable debug mode and check logs
-
-### Headers issues?
-
-- The middleware removes problematic headers like `Set-Cookie` from cached responses
-- Check for other middleware that might be setting conflicting headers
-
-### Performance issues?
-
-- Use Redis with persistence disabled for cache-only instances
-- Consider using separate Redis databases for cache and sessions
-- Monitor memory usage with `redis-cli INFO memory`
-
-## Requirements
-
-- PHP 8.1+
-- Laravel 10.x or 11.x
-- Redis (or other tag-supporting cache driver) for invalidation features
-
-## Testing
-
-```bash
-composer test
-composer phpstan
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Run tests locally (`composer test`)
-4. Commit your changes (`git commit -m 'Add amazing feature'`)
-5. Push to the branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for recent changes.
+- The package uses key-based invalidation only; cache `flush()` is intentionally avoided because it clears unrelated data.
+- Streamed responses or those not meeting cache rules (status, size, etc.) are skipped automatically.
+- Route indexes are capped to the most recent 1000 keys to remain memory safe.
+- Use caution when changing configuration in production; mismatched prefixes or stores can orphan keys.
 
 ## License
 
-The MIT License (MIT). See [LICENSE](LICENSE) file for more information.
-
-## Support
-
-For issues and questions, please use the [GitHub issue tracker](https://github.com/angelleger/laravel-response-cache/issues).
-
-## Credits
-
-- [Angel Leger](https://github.com/angelleger)(https://www.linkedin.com/in/angelleger/)
-- [All Contributors](../../contributors)
-
----
-
-Made with ❤️ for the Laravel community
+MIT

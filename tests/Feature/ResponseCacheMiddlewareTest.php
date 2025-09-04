@@ -2,95 +2,94 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Cache;
+use AngelLeger\ResponseCache\Facades\ResponseCache;
+use Illuminate\Foundation\Auth\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use AngelLeger\ResponseCache\Facades\ResponseCache as Resp;
-use AngelLeger\ResponseCache\Contracts\KeyResolver;
+
+use function Pest\Laravel\actingAs;
+use function Pest\Laravel\artisan;
 use function Pest\Laravel\get;
 use function Pest\Laravel\withHeaders;
 
 it('caches get responses', function () {
     $calls = 0;
-
     Route::middleware('resp.cache:ttl=10')->get('/foo', function () use (&$calls) {
         $calls++;
-        return response('bar')->header('Cache-Control', 'public');
+
+        return response('bar');
     });
 
     $first = get('/foo');
-    expect($first->getContent())->toBe('bar');
-    expect($calls)->toBe(1);
+    expect($first->headers->get('X-Cache'))->toBeNull();
 
     $second = get('/foo');
-    expect($second->getContent())->toBe('bar');
+    expect($second->headers->get('X-Cache'))->toBe('HIT');
     expect($calls)->toBe(1);
 });
 
-it('caches responses without explicit cache-control header', function () {
+it('uses normalized key for sorted query and vary headers', function () {
+    Route::middleware('resp.cache:ttl=10')->get('/sorted', fn () => response('ok'));
+
+    $a = get('/sorted?b=1&a=2');
+    $b = get('/sorted?a=2&b=1');
+    expect($b->headers->get('X-Cache'))->toBe('HIT');
+
+    $c = withHeaders(['Accept-Language' => 'fr'])->get('/sorted?a=2&b=1');
+    expect($c->headers->get('X-Cache'))->toBeNull();
+});
+
+it('skips caching for authenticated users when guest_only', function () {
+    Route::middleware('resp.cache:ttl=10')->get('/auth', fn () => response('secret'));
+
+    $user = new class extends User
+    {
+        protected $table = 'users';
+
+        public $timestamps = false;
+    };
+    $user->id = 1;
+    actingAs($user);
+
+    $first = get('/auth');
+    $second = get('/auth');
+    expect($second->headers->get('X-Cache'))->toBeNull();
+});
+
+it('respects status whitelist', function () {
     $calls = 0;
-
-    Route::middleware('resp.cache:ttl=10')->get('/baz', function () use (&$calls) {
+    Route::middleware('resp.cache:ttl=10')->get('/status', function () use (&$calls) {
         $calls++;
-        return response('baz');
+
+        return response('nope', 500);
     });
-
-    $first = get('/baz');
-    expect($first->headers->get('Cache-Control'))->toBe('max-age=10, public');
-    expect($calls)->toBe(1);
-
-    $second = get('/baz');
-    expect($second->getContent())->toBe('baz');
-    expect($calls)->toBe(1);
+    get('/status');
+    get('/status');
+    expect($calls)->toBe(2);
 });
 
+it('can forget cached response by key', function () {
+    Route::middleware('resp.cache:ttl=10')->get('/forget', fn () => response('baz'));
+    get('/forget');
+    $key = ResponseCache::makeKey(Request::create('/forget', 'GET'));
+    expect(ResponseCache::get($key))->not->toBeNull();
 
-it('returns 304 when etag matches', function () {
-    Route::middleware('resp.cache:ttl=10')->get('/etag', function () {
-        return response('etagged')->header('Cache-Control', 'public');
-    });
+    ResponseCache::forgetByKey($key);
 
-    $first = get('/etag');
-    $etag = $first->headers->get('ETag');
+    $second = get('/forget');
+    expect($second->headers->get('X-Cache'))->toBeNull();
 
-    $second = withHeaders(['If-None-Match' => $etag])->get('/etag');
-
-    expect($second->getStatusCode())->toBe(304);
-    expect($second->getContent())->toBe('');
+    $third = get('/forget');
+    expect($third->headers->get('X-Cache'))->toBe('HIT');
 });
 
-it('can invalidate cache by tags', function () {
-    Cache::tags(['a'])->put('foo', 'bar', 60);
-    expect(Cache::tags(['a'])->get('foo'))->toBe('bar');
+it('clears cache via artisan command', function () {
+    Route::middleware('resp.cache:ttl=10')->get('/cli', fn () => response('ok'));
+    get('/cli');
+    $key = ResponseCache::makeKey(Request::create('/cli', 'GET'));
 
-    Resp::invalidateByTags(['a']);
+    artisan('response-cache:clear', ['--key' => $key])->assertExitCode(0);
 
-    expect(Cache::tags(['a'])->get('foo'))->toBeNull();
-});
-
-it('can invalidate multiple tags independently', function () {
-    Cache::tags(['a'])->put('foo', 'bar', 60);
-    Cache::tags(['b'])->put('baz', 'qux', 60);
-
-    Resp::invalidateByTags(['a', 'b']);
-
-    expect(Cache::tags(['a'])->get('foo'))->toBeNull();
-    expect(Cache::tags(['b'])->get('baz'))->toBeNull();
-});
-
-it('can retrieve cached responses by tag', function () {
-    Route::middleware('resp.cache:ttl=10,tag:foo')->get('/bar', function () {
-        return response('baz')->header('Cache-Control', 'public');
-    });
-
-    withHeaders(['Accept' => 'application/json'])->get('/bar');
-
-    $request = \Illuminate\Http\Request::create('/bar', 'GET', [], [], [], ['HTTP_ACCEPT' => 'application/json']);
-    /** @var KeyResolver $resolver */
-    $resolver = app(KeyResolver::class);
-    [$key] = $resolver->make($request);
-
-    $cached = Resp::getByTags(['foo'], $key);
-
-    expect($cached)->not->toBeNull();
-    expect($cached->getContent())->toBe('baz');
+    $again = get('/cli');
+    expect($again->headers->get('X-Cache'))->toBeNull();
 });
