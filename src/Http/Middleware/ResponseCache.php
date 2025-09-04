@@ -43,7 +43,7 @@ class ResponseCache
         $resolver = app(KeyResolver::class);
         [$key] = $resolver->make($request);
 
-        $store = Cache::store(config('cache.default'));
+        $store = Cache::store(config('response_cache.store'));
         $supportsTags = method_exists($store->getStore(), 'tags');
 
         /** @var CacheRepository $repo */

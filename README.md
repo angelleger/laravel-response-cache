@@ -22,12 +22,13 @@ Publish config (optional):
 php artisan vendor:publish --tag=response-cache-config
 ```
 
-Ensure your cache store supports tags (e.g., Redis):
+Ensure your cache store supports tags (e.g., Redis). By default the package uses your default cache store, but you may specify a different store via `RESPONSE_CACHE_STORE`:
 
 `.env`
 ```
 CACHE_STORE=redis
 REDIS_CLIENT=phpredis
+# optional: RESPONSE_CACHE_STORE=redis
 ```
 
 ## Usage
@@ -57,7 +58,7 @@ php artisan response-cache:flush --tags=posts,post:42
 ```
 
 Config keys in `config/response_cache.php`:
-- `ttl`, `guest_only`, `vary_headers`, `prefix`, `etag`, `include_ip`.
+- `ttl`, `store`, `guest_only`, `vary_headers`, `prefix`, `etag`, `include_ip`.
 
 ## Testing locally
 

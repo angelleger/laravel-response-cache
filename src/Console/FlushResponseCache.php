@@ -21,7 +21,7 @@ class FlushResponseCache extends Command
             return self::FAILURE;
         }
 
-        $store = Cache::store(config('cache.default'));
+        $store = Cache::store(config('response_cache.store'));
         $supportsTags = method_exists($store, 'supportsTags') ? $store->supportsTags() : method_exists($store->getStore(), 'tags');
         if (! $supportsTags) {
             $this->error('The configured cache store does not support tags.');
