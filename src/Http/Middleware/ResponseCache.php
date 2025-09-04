@@ -44,7 +44,7 @@ class ResponseCache
         [$key] = $resolver->make($request);
 
         $store = Cache::store(config('response_cache.store'));
-        $supportsTags = method_exists($store->getStore(), 'tags');
+        $supportsTags = method_exists($store, 'supportsTags') ? $store->supportsTags() : method_exists($store->getStore(), 'tags');
 
         /** @var CacheRepository $repo */
         $repo = ($supportsTags && $tags) ? $store->tags($tags) : $store;

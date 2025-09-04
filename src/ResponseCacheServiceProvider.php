@@ -30,8 +30,6 @@ class ResponseCacheServiceProvider extends ServiceProvider
             __DIR__ . '/../config/response_cache.php' => config_path('response_cache.php'),
         ], 'response-cache-config');
 
-        $router->aliasMiddleware('resp.cache', Http\Middleware\ResponseCache::class);
-
         if ($this->app->runningInConsole()) {
             $this->commands([
                 Console\FlushResponseCache::class,
