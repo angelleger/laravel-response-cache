@@ -31,6 +31,8 @@ return [
     'status_whitelist' => [200], // only cache these response codes
     'max_payload_kb' => null, // skip responses larger than this (in kilobytes)
     'etag' => true, // automatically add ETag header to cached responses
+    'lock_seconds' => 0, // hold an atomic lock for this many seconds while generating
+    'lock_wait' => 10, // seconds to wait for a lock to be released
     'debug' => env('RESPONSE_CACHE_DEBUG', false), // enable debug helpers
 ];
 ```
@@ -47,6 +49,7 @@ return [
 - **status_whitelist**: response status codes eligible for caching.
 - **max_payload_kb**: maximum size of the response body; larger responses are bypassed.
 - **etag**: toggle automatic generation of an `ETag` header when caching.
+- **lock_seconds / lock_wait**: when `lock_seconds` > 0, generation is wrapped in an atomic lock to prevent cache stampedes.
 - **debug**: when enabled, exposes additional debug headers.
 
 ## Cache Key Strategy

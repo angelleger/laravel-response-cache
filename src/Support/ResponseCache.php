@@ -6,6 +6,7 @@ namespace AngelLeger\ResponseCache\Support;
 
 use Closure;
 use DateTimeInterface;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -17,11 +18,14 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class ResponseCache
 {
+    /** @phpstan-var Repository&LockProvider */
     private Repository $store;
 
     public function __construct(?Repository $store = null)
     {
-        $this->store = $store ?? Cache::store(config('response_cache.store'));
+        /** @phpstan-var Repository&LockProvider $repository */
+        $repository = $store ?? Cache::store(config('response_cache.store'));
+        $this->store = $repository;
     }
 
     /**
@@ -50,6 +54,29 @@ class ResponseCache
         $key = $this->makeKey($request);
         if ($payload = $this->store->get($key)) {
             return $this->buildResponse($payload);
+        }
+
+        $lockSeconds = (int) config('response_cache.lock_seconds', 0);
+        if ($lockSeconds > 0) {
+            $wait = (int) config('response_cache.lock_wait', 10);
+
+            /** @var \Illuminate\Contracts\Cache\Lock $lock */
+            $lock = $this->store->lock($key.':lock', $lockSeconds);
+
+            /** @var Response $response */
+            $response = $lock->block($wait, function () use ($key, $request, $callback, $ttl) {
+                if ($payload = $this->store->get($key)) {
+                    return $this->buildResponse($payload);
+                }
+
+                /** @var Response $generated */
+                $generated = $callback($request);
+                $this->store($key, $request, $generated, $ttl);
+
+                return $generated;
+            });
+
+            return $response;
         }
 
         /** @var Response $response */
