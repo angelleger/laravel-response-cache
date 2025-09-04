@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AngelLeger\ResponseCache\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use AngelLeger\ResponseCache\Support\ResponseCache as Resp;
 
 class FlushResponseCache extends Command
@@ -17,6 +18,13 @@ class FlushResponseCache extends Command
         $tags = array_filter(array_map('trim', explode(',', (string) $this->option('tags'))));
         if (!$tags) {
             $this->error('Please provide --tags=tag1,tag2');
+            return self::FAILURE;
+        }
+
+        $store = Cache::store(config('cache.default'));
+        $supportsTags = method_exists($store, 'supportsTags') ? $store->supportsTags() : method_exists($store->getStore(), 'tags');
+        if (! $supportsTags) {
+            $this->error('The configured cache store does not support tags.');
             return self::FAILURE;
         }
 

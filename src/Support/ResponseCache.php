@@ -17,7 +17,7 @@ final class ResponseCache
     public static function invalidateByTags(array $tags): void
     {
         $store = Cache::store(config('cache.default'));
-        if (method_exists($store->getStore(), 'tags')) {
+        if (method_exists($store, 'supportsTags') ? $store->supportsTags() : method_exists($store->getStore(), 'tags')) {
             $store->tags($tags)->flush();
         }
     }
