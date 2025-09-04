@@ -65,3 +65,13 @@ it('can invalidate cache by tags', function () {
 
     expect(Cache::tags(['a'])->get('foo'))->toBeNull();
 });
+
+it('can invalidate multiple tags independently', function () {
+    Cache::tags(['a'])->put('foo', 'bar', 60);
+    Cache::tags(['b'])->put('baz', 'qux', 60);
+
+    Resp::invalidateByTags(['a', 'b']);
+
+    expect(Cache::tags(['a'])->get('foo'))->toBeNull();
+    expect(Cache::tags(['b'])->get('baz'))->toBeNull();
+});

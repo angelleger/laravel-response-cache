@@ -22,18 +22,20 @@ final class ResponseCache
 
         $store = Cache::store(config('response_cache.store'));
 
-        try {
-            $store->tags($tags)->flush();
+        foreach ($tags as $tag) {
+            try {
+                $store->tags([$tag])->flush();
 
-            if (config('response_cache.debug', false)) {
-                Log::debug('ResponseCache: Invalidated tags', ['tags' => $tags]);
+                if (config('response_cache.debug', false)) {
+                    Log::debug('ResponseCache: Invalidated tag', ['tag' => $tag]);
+                }
+            } catch (\BadMethodCallException $e) {
+                Log::warning('ResponseCache: Store does not support tags for invalidation', [
+                    'store' => get_class($store),
+                    'tag' => $tag,
+                    'error' => $e->getMessage()
+                ]);
             }
-        } catch (\BadMethodCallException $e) {
-            Log::warning('ResponseCache: Store does not support tags for invalidation', [
-                'store' => get_class($store),
-                'tags' => $tags,
-                'error' => $e->getMessage()
-            ]);
         }
     }
 
