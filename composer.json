@@ -1,11 +1,14 @@
 {
   "name": "angelleger/laravel-response-cache",
-  "description": "Fast response caching for Laravel APIs with ETag, Redis tags, per-route TTLs, and safe auth-variation.",
+  "description": "Production-grade response caching for Laravel APIs with ETag, Redis tags, per-route TTLs, and safe auth-variation",
   "type": "library",
   "license": "MIT",
-  "keywords": ["laravel", "cache", "response", "etag", "redis", "middleware"],
+  "keywords": ["laravel", "cache", "response", "etag", "redis", "middleware", "api", "performance"],
   "authors": [
-    { "name": "Angel Leger", "email": "you@example.com" }
+    {
+      "name": "Angel Leger",
+      "email": "you@example.com"
+    }
   ],
   "require": {
     "php": "^8.1",

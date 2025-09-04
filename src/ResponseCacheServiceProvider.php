@@ -9,6 +9,7 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 use AngelLeger\ResponseCache\Contracts\KeyResolver;
 use AngelLeger\ResponseCache\Support\DefaultKeyResolver;
+use AngelLeger\ResponseCache\Support\ResponseCache;
 
 class ResponseCacheServiceProvider extends ServiceProvider
 {
@@ -22,15 +23,17 @@ class ResponseCacheServiceProvider extends ServiceProvider
                 varyHeaders: (array) config('response_cache.vary_headers', [])
             );
         });
+
+        $this->app->singleton(ResponseCache::class, function ($app) {
+            return new ResponseCache();
+        });
     }
 
-    public function boot(Router $router, HttpKernel $kernel): void
+    public function boot(Router $router): void
     {
         $this->publishes([
             __DIR__ . '/../config/response_cache.php' => config_path('response_cache.php'),
         ], 'response-cache-config');
-
-        $router->aliasMiddleware('resp.cache', Http\Middleware\ResponseCache::class);
 
         if ($this->app->runningInConsole()) {
             $this->commands([

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Route;
-use AngelLeger\ResponseCache\Support\ResponseCache as Resp;
+use AngelLeger\ResponseCache\Facades\ResponseCache as Resp;
 use function Pest\Laravel\get;
 use function Pest\Laravel\withHeaders;
 
